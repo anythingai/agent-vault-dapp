@@ -12,6 +12,7 @@ import {
   SwapError,
   SwapErrorCode
 } from '../types';
+import { oneInchService, loadOneInchConfig, OneInchOrder } from '../services/oneInchService';
 
 interface SwapFormProps {
   className?: string;
@@ -71,6 +72,9 @@ export function SwapForm({ className = '' }: SwapFormProps) {
   const [estimatedFee, setEstimatedFee] = useState<string | null>(null);
   const [estimatedTime, setEstimatedTime] = useState<string | null>(null);
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const [isSigningOrder, setIsSigningOrder] = useState(false);
+  const [oneInchOrder, setOneInchOrder] = useState<OneInchOrder | null>(null);
+  const [orderSignature, setOrderSignature] = useState<any>(null);
 
   // Load token balances when wallet connects
   useEffect(() => {
@@ -78,6 +82,11 @@ export function SwapForm({ className = '' }: SwapFormProps) {
       loadTokenBalances();
     }
   }, [wallet.isConnected, wallet.address]);
+
+  // Load 1inch configuration on mount
+  useEffect(() => {
+    loadOneInchConfig();
+  }, []);
 
   // Estimate fees when swap parameters change
   useEffect(() => {
@@ -206,39 +215,105 @@ export function SwapForm({ className = '' }: SwapFormProps) {
 
     try {
       clearError();
+      setIsSigningOrder(true);
       
+      // Generate secret hash and timelock
       const secretHash = ethers.keccak256(ethers.randomBytes(32));
       const timelock = Math.floor(Date.now() / 1000) + (2 * 3600); // 2 hours from now
 
-      const orderData = {
+      // Create 1inch order
+      const makingAmount = ethers.parseUnits(
+        swapForm.fromAmount,
+        selectedFromToken?.decimals || 18
+      ).toString();
+
+      const takingAmount = ethers.parseUnits(
+        swapForm.toAmount || swapForm.fromAmount, // Mock 1:1 conversion for demo
+        BTC_TOKEN.decimals
+      ).toString();
+
+      console.log('Creating 1inch order...');
+      const newOneInchOrder = oneInchService.createOrderFromSwapData(
+        wallet.address!,
+        swapForm.fromToken === NATIVE_TOKEN_ADDRESS ? ethers.ZeroAddress : swapForm.fromToken,
+        swapForm.toToken, // BTC (will be handled by cross-chain logic)
+        makingAmount,
+        takingAmount,
+        wallet.address!, // receiver
+        secretHash
+      );
+
+      setOneInchOrder(newOneInchOrder);
+
+      // Get signer from MetaMask/wallet
+      if (!window.ethereum) {
+        throw new Error('MetaMask not found');
+      }
+
+      const provider = new ethers.BrowserProvider(window.ethereum);
+      const signer = await provider.getSigner();
+
+      // Sign the 1inch order using EIP-712
+      console.log('Signing 1inch order with EIP-712...');
+      const signature = await oneInchService.signOrder(newOneInchOrder, signer);
+      setOrderSignature(signature);
+
+      console.log('✅ Order signed successfully');
+      console.log('Order hash:', oneInchService.calculateOrderHash(newOneInchOrder));
+
+      // Prepare the order data for submission
+      const orderSubmissionData = oneInchService.prepareOrderForSubmission(
+        newOneInchOrder,
+        signature,
+        secretHash,
+        timelock,
+        swapForm.bitcoinAddress
+      );
+
+      // Create the legacy order format for backward compatibility
+      const legacyOrderData = {
         maker: wallet.address!,
         makerAsset: {
           chainId: swapForm.fromChain,
           token: swapForm.fromToken,
-          amount: ethers.parseUnits(
-            swapForm.fromAmount,
-            selectedFromToken?.decimals || 18
-          ).toString()
+          amount: makingAmount
         },
         takerAsset: {
           chainId: swapForm.toChain,
           token: swapForm.toToken,
-          amount: ethers.parseUnits(
-            swapForm.toAmount || swapForm.fromAmount, // Mock 1:1 conversion
-            BTC_TOKEN.decimals
-          ).toString()
+          amount: takingAmount
         },
         secretHash,
-        timelock
+        timelock,
+        // Include 1inch specific data
+        oneInchData: orderSubmissionData
       };
 
-      const order = await createSwapOrder(orderData);
-      console.log('Swap order created:', order);
+      console.log('Submitting swap order with 1inch integration...');
+      const order = await createSwapOrder(legacyOrderData);
+      console.log('✅ Swap order created:', order);
+      
+      // Show success message
+      alert('🎉 Swap order created successfully with 1inch integration!\n\nOrder has been signed using EIP-712 and submitted to the relayer for processing.');
       
       // Reset form after successful creation
       resetSwapForm();
-    } catch (error) {
+      setOneInchOrder(null);
+      setOrderSignature(null);
+      
+    } catch (error: any) {
       console.error('Failed to create swap:', error);
+      
+      // Handle specific signing errors
+      if (error.message?.includes('User rejected')) {
+        alert('❌ Order signing was rejected. Please try again and approve the signature request.');
+      } else if (error.message?.includes('sign')) {
+        alert('❌ Failed to sign order. Please make sure your wallet is connected and try again.');
+      } else {
+        alert(`❌ Failed to create swap: ${error.message || 'Unknown error'}`);
+      }
+    } finally {
+      setIsSigningOrder(false);
     }
   };
 
@@ -386,12 +461,53 @@ export function SwapForm({ className = '' }: SwapFormProps) {
           )}
 
           {/* Swap Button */}
+          {/* Order Preview */}
+          {oneInchOrder && (
+            <div className="order-preview">
+              <h4>📋 Order Preview</h4>
+              <div className="order-details">
+                <div className="order-row">
+                  <span>You give:</span>
+                  <span>{swapForm.fromAmount} {selectedFromToken?.symbol}</span>
+                </div>
+                <div className="order-row">
+                  <span>You receive:</span>
+                  <span>{swapForm.fromAmount} BTC</span>
+                </div>
+                <div className="order-row">
+                  <span>Order hash:</span>
+                  <span className="hash">{oneInchService.calculateOrderHash(oneInchOrder).substring(0, 10)}...</span>
+                </div>
+                {orderSignature && (
+                  <div className="signature-status">
+                    ✅ Order signed with EIP-712
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* 1inch Integration Info */}
+          {oneInchService.isConfigured() && (
+            <div className="integration-info">
+              <div className="info-badge">
+                🟢 1inch Limit Order Protocol Integration Active
+              </div>
+              <small>Orders are signed using EIP-712 and executed through official 1inch contracts</small>
+            </div>
+          )}
+
           <button
             onClick={handleCreateSwap}
-            disabled={!canCreateSwap}
-            className={`swap-btn ${canCreateSwap ? 'enabled' : 'disabled'}`}
+            disabled={!canCreateSwap || isSigningOrder}
+            className={`swap-btn ${canCreateSwap && !isSigningOrder ? 'enabled' : 'disabled'}`}
           >
-            {isCreatingOrder ? (
+            {isSigningOrder ? (
+              <span className="loading">
+                <span className="spinner"></span>
+                Signing Order with EIP-712...
+              </span>
+            ) : isCreatingOrder ? (
               <span className="loading">
                 <span className="spinner"></span>
                 Creating Swap...
@@ -405,7 +521,7 @@ export function SwapForm({ className = '' }: SwapFormProps) {
             ) : !isValidAmount ? (
               'Invalid Amount'
             ) : (
-              'Create Swap'
+              'Sign & Create 1inch Swap'
             )}
           </button>
         </div>

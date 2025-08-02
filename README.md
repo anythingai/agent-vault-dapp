@@ -105,3 +105,7 @@ This will execute a pre-configured atomic swap on testnets.
 ## License
 
 MIT
+bitcoind -testnet -daemon
+
+```
+
