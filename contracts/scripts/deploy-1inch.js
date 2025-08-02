@@ -23,6 +23,7 @@ async function main() {
 
   let limitOrderProtocol;
   let isOfficialDeployment = false;
+  let escrowFactoryAddress;
 
   // Try to find existing 1inch deployment
   try {
@@ -39,7 +40,7 @@ async function main() {
     const escrowFactory = await EscrowFactory.deploy();
     await escrowFactory.waitForDeployment();
     
-    const escrowFactoryAddress = await escrowFactory.getAddress();
+    escrowFactoryAddress = await escrowFactory.getAddress();
     console.log("✅ EscrowFactory deployed to:", escrowFactoryAddress);
     
     // Deploy the LimitOrderProtocol contract
