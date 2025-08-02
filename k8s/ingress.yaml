@@ -1,0 +1,349 @@
+# Ingress for HTTP/HTTPS traffic
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: fusion-bitcoin-ingress
+  namespace: fusion-bitcoin
+  labels:
+    app: fusion-bitcoin-bridge
+    component: ingress
+    environment: production
+  annotations:
+    kubernetes.io/ingress.class: "nginx"
+    nginx.ingress.kubernetes.io/rewrite-target: /
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    
+    # SSL Configuration
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    nginx.ingress.kubernetes.io/ssl-protocols: "TLSv1.2 TLSv1.3"
+    nginx.ingress.kubernetes.io/ssl-ciphers: "ECDHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-SHA384"
+    
+    # Security Headers
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      add_header X-Frame-Options "SAMEORIGIN" always;
+      add_header X-Content-Type-Options "nosniff" always;
+      add_header X-XSS-Protection "1; mode=block" always;
+      add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+      add_header Strict-Transport-Security "max-age=31536000; includeSubDomains; preload" always;
+      add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self' https: wss:; frame-src 'none'; object-src 'none'; base-uri 'self';" always;
+    
+    # Rate Limiting
+    nginx.ingress.kubernetes.io/rate-limit-connections: "100"
+    nginx.ingress.kubernetes.io/rate-limit-requests-per-minute: "1000"
+    nginx.ingress.kubernetes.io/rate-limit-requests-per-second: "20"
+    
+    # CORS Configuration
+    nginx.ingress.kubernetes.io/cors-allow-origin: "https://fusion-bitcoin.1inch.io"
+    nginx.ingress.kubernetes.io/cors-allow-methods: "GET, POST, PUT, DELETE, OPTIONS"
+    nginx.ingress.kubernetes.io/cors-allow-headers: "DNT,Keep-Alive,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Range,Authorization"
+    nginx.ingress.kubernetes.io/cors-expose-headers: "Content-Length,Content-Range"
+    nginx.ingress.kubernetes.io/enable-cors: "true"
+    
+    # Load Balancing
+    nginx.ingress.kubernetes.io/upstream-hash-by: "$remote_addr"
+    nginx.ingress.kubernetes.io/affinity: "cookie"
+    nginx.ingress.kubernetes.io/session-cookie-name: "fusion-bitcoin-affinity"
+    nginx.ingress.kubernetes.io/session-cookie-expires: "3600"
+    nginx.ingress.kubernetes.io/session-cookie-max-age: "3600"
+    nginx.ingress.kubernetes.io/session-cookie-path: "/"
+    
+    # Request Size and Timeouts
+    nginx.ingress.kubernetes.io/proxy-body-size: "16m"
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "30"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "30"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "30"
+    
+    # Buffering
+    nginx.ingress.kubernetes.io/proxy-buffering: "on"
+    nginx.ingress.kubernetes.io/proxy-buffer-size: "4k"
+    nginx.ingress.kubernetes.io/proxy-buffers-number: "8"
+    
+spec:
+  tls:
+  - hosts:
+    - fusion-bitcoin.1inch.io
+    - api.fusion-bitcoin.1inch.io
+    secretName: fusion-bitcoin-tls-cert
+  rules:
+  # Main application
+  - host: fusion-bitcoin.1inch.io
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: fusion-bitcoin-frontend
+            port:
+              number: 3002
+  
+  # API endpoints
+  - host: api.fusion-bitcoin.1inch.io
+    http:
+      paths:
+      # Relayer API
+      - path: /relayer
+        pathType: Prefix
+        backend:
+          service:
+            name: fusion-bitcoin-relayer
+            port:
+              number: 3000
+      # Resolver API
+      - path: /resolver
+        pathType: Prefix
+        backend:
+          service:
+            name: fusion-bitcoin-resolver
+            port:
+              number: 3001
+      # Health checks
+      - path: /health
+        pathType: Prefix
+        backend:
+          service:
+            name: fusion-bitcoin-health
+            port:
+              number: 3000
+
+---
+# Certificate for TLS
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: fusion-bitcoin-cert
+  namespace: fusion-bitcoin
+  labels:
+    app: fusion-bitcoin-bridge
+    component: certificate
+    environment: production
+spec:
+  secretName: fusion-bitcoin-tls-cert
+  issuerRef:
+    name: letsencrypt-prod
+    kind: ClusterIssuer
+  dnsNames:
+  - fusion-bitcoin.1inch.io
+  - api.fusion-bitcoin.1inch.io
+  - "*.fusion-bitcoin.1inch.io"
+
+---
+# ClusterIssuer for Let's Encrypt (production)
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-prod
+  labels:
+    app: fusion-bitcoin-bridge
+    component: certificate-issuer
+    environment: production
+spec:
+  acme:
+    email: devops@1inch.io  # Replace with actual email
+    server: https://acme-v02.api.letsencrypt.org/directory
+    privateKeySecretRef:
+      name: letsencrypt-prod-private-key
+    solvers:
+    - http01:
+        ingress:
+          class: nginx
+    - dns01:
+        cloudflare:
+          email: devops@1inch.io  # Replace with actual email
+          apiTokenSecretRef:
+            name: cloudflare-api-token-secret
+            key: api-token
+
+---
+# Staging Ingress (for testing)
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: fusion-bitcoin-staging-ingress
+  namespace: fusion-bitcoin
+  labels:
+    app: fusion-bitcoin-bridge
+    component: ingress
+    environment: staging
+  annotations:
+    kubernetes.io/ingress.class: "nginx"
+    nginx.ingress.kubernetes.io/rewrite-target: /
+    cert-manager.io/cluster-issuer: "letsencrypt-staging"
+    nginx.ingress.kubernetes.io/ssl-redirect: "false"  # Allow HTTP for staging
+spec:
+  tls:
+  - hosts:
+    - staging.fusion-bitcoin.1inch.io
+    secretName: fusion-bitcoin-staging-tls-cert
+  rules:
+  - host: staging.fusion-bitcoin.1inch.io
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: fusion-bitcoin-frontend
+            port:
+              number: 3002
+      - path: /api/relayer
+        pathType: Prefix
+        backend:
+          service:
+            name: fusion-bitcoin-relayer
+            port:
+              number: 3000
+      - path: /api/resolver
+        pathType: Prefix
+        backend:
+          service:
+            name: fusion-bitcoin-resolver
+            port:
+              number: 3001
+
+---
+# ClusterIssuer for Let's Encrypt (staging)
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-staging
+  labels:
+    app: fusion-bitcoin-bridge
+    component: certificate-issuer
+    environment: staging
+spec:
+  acme:
+    email: devops@1inch.io  # Replace with actual email
+    server: https://acme-staging-v02.api.letsencrypt.org/directory
+    privateKeySecretRef:
+      name: letsencrypt-staging-private-key
+    solvers:
+    - http01:
+        ingress:
+          class: nginx
+
+---
+# Network Policy for Ingress
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: fusion-bitcoin-ingress-network-policy
+  namespace: fusion-bitcoin
+  labels:
+    app: fusion-bitcoin-bridge
+    component: network-policy
+    environment: production
+spec:
+  podSelector:
+    matchLabels:
+      app: fusion-bitcoin-bridge
+  policyTypes:
+  - Ingress
+  ingress:
+  # Allow ingress from ingress controller
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: ingress-nginx
+    ports:
+    - protocol: TCP
+      port: 3000
+    - protocol: TCP
+      port: 3001
+    - protocol: TCP
+      port: 3002
+  # Allow ingress from load balancer
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: kube-system
+    ports:
+    - protocol: TCP
+      port: 3000
+    - protocol: TCP
+      port: 3001
+    - protocol: TCP
+      port: 3002
+
+---
+# Pod Disruption Budget for Frontend
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: fusion-bitcoin-frontend-pdb
+  namespace: fusion-bitcoin
+  labels:
+    app: fusion-bitcoin-bridge
+    component: frontend
+    environment: production
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: fusion-bitcoin-bridge
+      component: frontend
+
+---
+# Pod Disruption Budget for Relayer
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: fusion-bitcoin-relayer-pdb
+  namespace: fusion-bitcoin
+  labels:
+    app: fusion-bitcoin-bridge
+    component: relayer
+    environment: production
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: fusion-bitcoin-bridge
+      component: relayer
+
+---
+# Pod Disruption Budget for Resolver
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: fusion-bitcoin-resolver-pdb
+  namespace: fusion-bitcoin
+  labels:
+    app: fusion-bitcoin-bridge
+    component: resolver
+    environment: production
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: fusion-bitcoin-bridge
+      component: resolver
+
+---
+# Priority Class for critical pods
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: fusion-bitcoin-critical
+  labels:
+    app: fusion-bitcoin-bridge
+    component: priority-class
+    environment: production
+value: 1000000
+globalDefault: false
+description: "Priority class for critical Fusion Bitcoin Bridge components"
+
+---
+# Priority Class for normal pods
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: fusion-bitcoin-normal
+  labels:
+    app: fusion-bitcoin-bridge
+    component: priority-class
+    environment: production
+value: 100000
+globalDefault: false
+description: "Priority class for normal Fusion Bitcoin Bridge components"

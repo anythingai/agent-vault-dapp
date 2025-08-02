@@ -1,0 +1,351 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: fusion-bitcoin-relayer
+  namespace: fusion-bitcoin
+  labels:
+    app: fusion-bitcoin-bridge
+    component: relayer
+    environment: production
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "9090"
+    prometheus.io/path: "/metrics"
+spec:
+  type: ClusterIP
+  ports:
+  - name: http
+    port: 3000
+    targetPort: 3000
+    protocol: TCP
+  - name: metrics
+    port: 9090
+    targetPort: 9090
+    protocol: TCP
+  selector:
+    app: fusion-bitcoin-bridge
+    component: relayer
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: fusion-bitcoin-resolver
+  namespace: fusion-bitcoin
+  labels:
+    app: fusion-bitcoin-bridge
+    component: resolver
+    environment: production
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "9091"
+    prometheus.io/path: "/metrics"
+spec:
+  type: ClusterIP
+  ports:
+  - name: http
+    port: 3001
+    targetPort: 3001
+    protocol: TCP
+  - name: metrics
+    port: 9091
+    targetPort: 9091
+    protocol: TCP
+  selector:
+    app: fusion-bitcoin-bridge
+    component: resolver
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: fusion-bitcoin-frontend
+  namespace: fusion-bitcoin
+  labels:
+    app: fusion-bitcoin-bridge
+    component: frontend
+    environment: production
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "9092"
+    prometheus.io/path: "/metrics"
+spec:
+  type: ClusterIP
+  ports:
+  - name: http
+    port: 3002
+    targetPort: 3002
+    protocol: TCP
+  - name: metrics
+    port: 9092
+    targetPort: 9092
+    protocol: TCP
+  selector:
+    app: fusion-bitcoin-bridge
+    component: frontend
+
+---
+# PostgreSQL Database Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: fusion-bitcoin-postgres
+  namespace: fusion-bitcoin
+  labels:
+    app: fusion-bitcoin-bridge
+    component: postgres
+    environment: production
+spec:
+  type: ClusterIP
+  ports:
+  - name: postgres
+    port: 5432
+    targetPort: 5432
+    protocol: TCP
+  selector:
+    app: fusion-bitcoin-bridge
+    component: postgres
+
+---
+# Redis Cache Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: fusion-bitcoin-redis
+  namespace: fusion-bitcoin
+  labels:
+    app: fusion-bitcoin-bridge
+    component: redis
+    environment: production
+spec:
+  type: ClusterIP
+  ports:
+  - name: redis
+    port: 6379
+    targetPort: 6379
+    protocol: TCP
+  selector:
+    app: fusion-bitcoin-bridge
+    component: redis
+
+---
+# Health Check Service (Internal)
+apiVersion: v1
+kind: Service
+metadata:
+  name: fusion-bitcoin-health
+  namespace: fusion-bitcoin
+  labels:
+    app: fusion-bitcoin-bridge
+    component: health
+    environment: production
+spec:
+  type: ClusterIP
+  ports:
+  - name: health-relayer
+    port: 3000
+    targetPort: 3000
+    protocol: TCP
+  - name: health-resolver
+    port: 3001
+    targetPort: 3001
+    protocol: TCP
+  - name: health-frontend
+    port: 3002
+    targetPort: 3002
+    protocol: TCP
+  selector:
+    app: fusion-bitcoin-bridge
+
+---
+# Load Balancer Service for External Access (Optional)
+apiVersion: v1
+kind: Service
+metadata:
+  name: fusion-bitcoin-loadbalancer
+  namespace: fusion-bitcoin
+  labels:
+    app: fusion-bitcoin-bridge
+    component: loadbalancer
+    environment: production
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
+    service.beta.kubernetes.io/aws-load-balancer-backend-protocol: "tcp"
+    service.beta.kubernetes.io/aws-load-balancer-cross-zone-load-balancing-enabled: "true"
+    service.beta.kubernetes.io/aws-load-balancer-ssl-cert: "arn:aws:acm:region:account:certificate/cert-id"
+    service.beta.kubernetes.io/aws-load-balancer-ssl-ports: "https"
+spec:
+  type: LoadBalancer
+  ports:
+  - name: http
+    port: 80
+    targetPort: 3002
+    protocol: TCP
+  - name: https
+    port: 443
+    targetPort: 3002
+    protocol: TCP
+  selector:
+    app: fusion-bitcoin-bridge
+    component: frontend
+  loadBalancerSourceRanges:
+  - 0.0.0.0/0  # Restrict this in production
+
+---
+# Headless Service for StatefulSet (if needed for database)
+apiVersion: v1
+kind: Service
+metadata:
+  name: fusion-bitcoin-postgres-headless
+  namespace: fusion-bitcoin
+  labels:
+    app: fusion-bitcoin-bridge
+    component: postgres
+    environment: production
+spec:
+  type: ClusterIP
+  clusterIP: None
+  ports:
+  - name: postgres
+    port: 5432
+    targetPort: 5432
+    protocol: TCP
+  selector:
+    app: fusion-bitcoin-bridge
+    component: postgres
+
+---
+# Metrics Service for Prometheus
+apiVersion: v1
+kind: Service
+metadata:
+  name: fusion-bitcoin-metrics
+  namespace: fusion-bitcoin
+  labels:
+    app: fusion-bitcoin-bridge
+    component: metrics
+    environment: production
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "9090"
+spec:
+  type: ClusterIP
+  ports:
+  - name: relayer-metrics
+    port: 9090
+    targetPort: 9090
+    protocol: TCP
+  - name: resolver-metrics
+    port: 9091
+    targetPort: 9091
+    protocol: TCP
+  - name: frontend-metrics
+    port: 9092
+    targetPort: 9092
+    protocol: TCP
+  selector:
+    app: fusion-bitcoin-bridge
+
+---
+# Service Monitor for Prometheus Operator
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: fusion-bitcoin-servicemonitor
+  namespace: fusion-bitcoin
+  labels:
+    app: fusion-bitcoin-bridge
+    component: monitoring
+    environment: production
+    release: prometheus
+spec:
+  selector:
+    matchLabels:
+      app: fusion-bitcoin-bridge
+  endpoints:
+  - port: metrics
+    path: /metrics
+    interval: 30s
+    scrapeTimeout: 10s
+  - port: relayer-metrics
+    path: /metrics
+    interval: 30s
+    scrapeTimeout: 10s
+  - port: resolver-metrics
+    path: /metrics
+    interval: 30s
+    scrapeTimeout: 10s
+  - port: frontend-metrics
+    path: /metrics
+    interval: 30s
+    scrapeTimeout: 10s
+  namespaceSelector:
+    matchNames:
+    - fusion-bitcoin
+
+---
+# Network Policy for Services
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: fusion-bitcoin-service-network-policy
+  namespace: fusion-bitcoin
+  labels:
+    app: fusion-bitcoin-bridge
+    component: network-policy
+    environment: production
+spec:
+  podSelector:
+    matchLabels:
+      app: fusion-bitcoin-bridge
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  # Allow ingress from ingress controller
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: ingress-nginx
+    ports:
+    - protocol: TCP
+      port: 3002
+  # Allow ingress from monitoring
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: monitoring
+    ports:
+    - protocol: TCP
+      port: 9090
+    - protocol: TCP
+      port: 9091
+    - protocol: TCP
+      port: 9092
+  # Allow inter-service communication
+  - from:
+    - podSelector:
+        matchLabels:
+          app: fusion-bitcoin-bridge
+    ports:
+    - protocol: TCP
+      port: 3000
+    - protocol: TCP
+      port: 3001
+    - protocol: TCP
+      port: 3002
+    - protocol: TCP
+      port: 5432
+    - protocol: TCP
+      port: 6379
+  egress:
+  # Allow egress to internet (blockchain nodes, APIs)
+  - {}
+  # Allow DNS resolution
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: kube-system
+    ports:
+    - protocol: UDP
+      port: 53

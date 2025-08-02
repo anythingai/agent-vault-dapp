@@ -1,0 +1,53 @@
+{
+  "name": "1inch-bitcoin-fusion",
+  "version": "1.0.0",
+  "description": "1inch Fusion+ Cross-Chain Swap Extension to Bitcoin",
+  "private": true,
+  "workspaces": [
+    "contracts",
+    "backend",
+    "frontend"
+  ],
+  "scripts": {
+    "install:all": "npm install && npm run install:contracts && npm run install:backend && npm run install:frontend",
+    "install:contracts": "cd contracts && npm install",
+    "install:backend": "cd backend && npm install",
+    "install:frontend": "cd frontend && npm install",
+    "build": "npm run build:contracts && npm run build:backend",
+    "build:contracts": "cd contracts && npm run build",
+    "build:backend": "cd backend && npm run build",
+    "test": "npm run test:contracts && npm run test:backend && npm run test:bitcoin",
+    "test:contracts": "cd contracts && npm test",
+    "test:backend": "cd backend && npm test",
+    "test:bitcoin": "cd tests && npm test",
+    "test:bitcoin:unit": "cd tests && npm run test:bitcoin",
+    "test:bitcoin:integration": "cd tests && npm run test:integration",
+    "test:bitcoin:security": "cd tests && npm run test:security",
+    "test:bitcoin:performance": "cd tests && npm run test:performance",
+    "test:bitcoin:coverage": "cd tests && npm run test:coverage",
+    "test:setup": "npm run test:setup:regtest",
+    "test:setup:regtest": "cd tests && npm run setup:regtest",
+    "test:teardown": "npm run test:teardown:regtest",
+    "test:teardown:regtest": "cd tests && npm run teardown:regtest",
+    "test:ci": "npm run test:bitcoin:unit && npm run test:bitcoin:security",
+    "test:full": "npm run test && npm run test:bitcoin:integration && npm run test:bitcoin:performance",
+    "demo": "node scripts/demo/run-demo.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/your-repo/1inch-bitcoin-fusion"
+  },
+  "keywords": [
+    "1inch",
+    "bitcoin",
+    "atomic-swap",
+    "cross-chain",
+    "defi"
+  ],
+  "author": "Your Team",
+  "license": "MIT",
+  "devDependencies": {
+    "prettier": "^3.0.0",
+    "eslint": "^8.50.0"
+  }
+}

@@ -1,0 +1,114 @@
+version: '3.8'
+
+services:
+  bitcoin-regtest:
+    build: 
+      context: ./docker/bitcoin-regtest
+      dockerfile: Dockerfile
+    container_name: bitcoin-regtest
+    ports:
+      - "18443:18443"  # RPC port
+      - "18444:18444"  # P2P port
+    volumes:
+      - bitcoin_data:/home/bitcoin/.bitcoin
+    healthcheck:
+      test: ["CMD", "bitcoin-cli", "-regtest", "getblockchaininfo"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+    networks:
+      - bitcoin-test-network
+
+  hardhat-node:
+    image: node:20-alpine
+    container_name: hardhat-node
+    working_dir: /app
+    ports:
+      - "8545:8545"
+    volumes:
+      - ../contracts:/app
+    command: >
+      sh -c "npm install && 
+             npx hardhat compile && 
+             npx hardhat node --hostname 0.0.0.0"
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8545"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+    networks:
+      - bitcoin-test-network
+
+  test-runner:
+    image: node:20-alpine
+    container_name: test-runner
+    working_dir: /app/tests
+    volumes:
+      - ..:/app
+    environment:
+      - BITCOIN_REGTEST_HOST=bitcoin-regtest
+      - BITCOIN_REGTEST_PORT=18443
+      - BITCOIN_REGTEST_USER=test
+      - BITCOIN_REGTEST_PASS=test
+      - ETH_RPC_URL=http://hardhat-node:8545
+      - ETH_CHAIN_ID=31337
+      - NODE_ENV=test
+    depends_on:
+      bitcoin-regtest:
+        condition: service_healthy
+      hardhat-node:
+        condition: service_healthy
+    command: ["tail", "-f", "/dev/null"]  # Keep container running
+    networks:
+      - bitcoin-test-network
+
+  test-coordinator:
+    image: node:20-alpine
+    container_name: test-coordinator
+    working_dir: /app
+    volumes:
+      - ..:/app
+      - test_reports:/app/reports
+    environment:
+      - BITCOIN_REGTEST_HOST=bitcoin-regtest
+      - BITCOIN_REGTEST_PORT=18443
+      - BITCOIN_REGTEST_USER=test
+      - BITCOIN_REGTEST_PASS=test
+      - ETH_RPC_URL=http://hardhat-node:8545
+      - ETH_CHAIN_ID=31337
+      - TEST_ENV=docker
+    depends_on:
+      bitcoin-regtest:
+        condition: service_healthy
+      hardhat-node:
+        condition: service_healthy
+    command: >
+      sh -c "
+        echo 'Installing dependencies...' &&
+        npm ci &&
+        cd tests && npm ci &&
+        echo 'Running comprehensive test suite...' &&
+        npm run test:full &&
+        echo 'Generating test reports...' &&
+        npm run generate:reports &&
+        echo 'Tests completed successfully!'
+      "
+    networks:
+      - bitcoin-test-network
+
+volumes:
+  bitcoin_data:
+    driver: local
+  test_reports:
+    driver: local
+
+networks:
+  bitcoin-test-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16

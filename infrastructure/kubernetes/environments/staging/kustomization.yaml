@@ -1,0 +1,206 @@
+# Kustomization for Staging Environment
+# Manages environment-specific configurations for staging
+
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+metadata:
+  name: fusion-bitcoin-staging
+  annotations:
+    config.kubernetes.io/local-config: "true"
+
+# Base resources
+resources:
+  - ../../base
+
+# Namespace
+namespace: fusion-bitcoin-staging
+
+# Name prefix for all resources
+namePrefix: staging-
+
+# Common labels applied to all resources
+commonLabels:
+  app.kubernetes.io/name: fusion-bitcoin-bridge
+  app.kubernetes.io/instance: staging
+  app.kubernetes.io/component: infrastructure
+  app.kubernetes.io/part-of: fusion-bitcoin
+  app.kubernetes.io/managed-by: kustomize
+  environment: staging
+
+# Common annotations
+commonAnnotations:
+  deployment.kubernetes.io/revision: "1"
+  config.kubernetes.io/origin: |
+    path: infrastructure/kubernetes/environments/staging/kustomization.yaml
+
+# Images with staging tags
+images:
+  - name: registry.example.com/fusion-bitcoin-relayer
+    newTag: staging-v1.0.0
+  - name: registry.example.com/fusion-bitcoin-resolver
+    newTag: staging-v1.0.0
+  - name: registry.example.com/fusion-bitcoin-frontend
+    newTag: staging-v1.0.0
+
+# Resource patches for staging environment
+patches:
+  # Set appropriate replica counts for staging
+  - patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 2
+    target:
+      kind: Deployment
+      name: fusion-bitcoin-relayer
+  
+  - patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 2
+    target:
+      kind: Deployment
+      name: fusion-bitcoin-resolver
+  
+  - patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 2
+    target:
+      kind: Deployment
+      name: fusion-bitcoin-frontend
+
+  # Set resource requests and limits for staging
+  - patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/cpu
+        value: "200m"
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/memory
+        value: "512Mi"
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/limits/cpu
+        value: "1000m"
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/limits/memory
+        value: "2Gi"
+    target:
+      kind: Deployment
+
+  # Enable HPA for staging
+  - patch: |-
+      apiVersion: autoscaling/v2
+      kind: HorizontalPodAutoscaler
+      metadata:
+        name: fusion-bitcoin-relayer-hpa
+        namespace: fusion-bitcoin-staging
+      spec:
+        scaleTargetRef:
+          apiVersion: apps/v1
+          kind: Deployment
+          name: staging-fusion-bitcoin-relayer
+        minReplicas: 2
+        maxReplicas: 5
+        metrics:
+        - type: Resource
+          resource:
+            name: cpu
+            target:
+              type: Utilization
+              averageUtilization: 70
+        - type: Resource
+          resource:
+            name: memory
+            target:
+              type: Utilization
+              averageUtilization: 80
+    target:
+      kind: Deployment
+      name: fusion-bitcoin-relayer
+
+# ConfigMap patches for staging environment
+patchesStrategicMerge:
+  - staging-config.yaml
+
+# Generate ConfigMap for staging-specific configuration
+configMapGenerator:
+  - name: fusion-bitcoin-staging-config
+    literals:
+      - NODE_ENV=staging
+      - LOG_LEVEL=info
+      - DB_HOST=fusion-bitcoin-staging-db.us-west-2.rds.amazonaws.com
+      - DB_PORT=5432
+      - REDIS_HOST=fusion-bitcoin-staging-redis.abc123.cache.amazonaws.com
+      - REDIS_PORT=6379
+      - METRICS_ENABLED=true
+      - HEALTH_CHECK_ENABLED=true
+      - BACKUP_ENABLED=true
+      - ETH_NETWORK=goerli
+      - BTC_NETWORK=testnet
+      - RATE_LIMITING_ENABLED=true
+      - CORS_ENABLED=true
+      - HTTPS_ENABLED=true
+    options:
+      disableNameSuffixHash: true
+
+# Generate Secret for staging environment
+secretGenerator:
+  - name: fusion-bitcoin-staging-secrets
+    literals:
+      - DB_PASSWORD=ENC[AES256_GCM,staging-db-password]
+      - REDIS_PASSWORD=ENC[AES256_GCM,staging-redis-password]
+      - JWT_SECRET=ENC[AES256_GCM,staging-jwt-secret]
+      - API_SECRET=ENC[AES256_GCM,staging-api-secret]
+      - ETH_PRIVATE_KEY=ENC[AES256_GCM,staging-eth-private-key]
+      - BTC_PRIVATE_KEY=ENC[AES256_GCM,staging-btc-private-key]
+    type: Opaque
+    options:
+      disableNameSuffixHash: true
+
+# Transformers
+transformers:
+  # Add staging-specific labels and annotations
+  - |-
+    apiVersion: builtin
+    kind: LabelTransformer
+    metadata:
+      name: staging-labels
+    labels:
+      deployment.environment: staging
+      cost-center: development
+      monitoring.enabled: "true"
+      backup.enabled: "true"
+    fieldSpecs:
+      - path: metadata/labels
+        create: true
+
+# Replicas configuration
+replicas:
+  - name: fusion-bitcoin-relayer
+    count: 2
+  - name: fusion-bitcoin-resolver
+    count: 2
+  - name: fusion-bitcoin-frontend
+    count: 2
+  - name: prometheus
+    count: 1
+  - name: grafana
+    count: 1
+
+# JSON patches for complex modifications
+patchesJson6902:
+  # Add staging-specific environment variables
+  - target:
+      kind: Deployment
+      name: fusion-bitcoin-relayer
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value:
+          name: ENVIRONMENT_TIER
+          value: staging
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value:
+          name: PERFORMANCE_MONITORING
+          value: "true"

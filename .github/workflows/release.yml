@@ -1,0 +1,288 @@
+name: Release Management
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (e.g., v1.2.3)'
+        required: true
+        type: string
+      prerelease:
+        description: 'Mark as prerelease'
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  validate-version:
+    name: Validate Version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      changelog: ${{ steps.changelog.outputs.changelog }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Extract version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ inputs.version }}"
+          else
+            VERSION=${GITHUB_REF#refs/tags/}
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Version: $VERSION"
+
+      - name: Validate version format
+        run: |
+          VERSION=${{ steps.version.outputs.version }}
+          if [[ ! $VERSION =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Invalid version format: $VERSION"
+            echo "Expected format: vX.Y.Z"
+            exit 1
+          fi
+
+      - name: Generate changelog
+        id: changelog
+        run: |
+          VERSION=${{ steps.version.outputs.version }}
+          PREV_TAG=$(git describe --tags --abbrev=0 HEAD~1 2>/dev/null || echo "")
+          
+          if [ -n "$PREV_TAG" ]; then
+            CHANGELOG=$(git log --pretty=format:"- %s" $PREV_TAG..HEAD)
+          else
+            CHANGELOG=$(git log --pretty=format:"- %s")
+          fi
+          
+          echo "changelog<<EOF" >> $GITHUB_OUTPUT
+          echo "$CHANGELOG" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+  build-release-artifacts:
+    name: Build Release Artifacts
+    runs-on: ubuntu-latest
+    needs: validate-version
+    strategy:
+      matrix:
+        component: [contracts, backend, frontend]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20.x'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: |
+          npm ci
+          cd ${{ matrix.component }} && npm ci
+
+      - name: Build ${{ matrix.component }}
+        run: |
+          cd ${{ matrix.component }}
+          npm run build:production
+        env:
+          NODE_ENV: production
+          VERSION: ${{ needs.validate-version.outputs.version }}
+
+      - name: Create artifact archive
+        run: |
+          cd ${{ matrix.component }}
+          if [ "${{ matrix.component }}" = "contracts" ]; then
+            tar -czf ../${{ matrix.component }}-${{ needs.validate-version.outputs.version }}.tar.gz \
+              artifacts/ cache/ contracts/ scripts/ hardhat.config.ts package.json
+          elif [ "${{ matrix.component }}" = "backend" ]; then
+            tar -czf ../${{ matrix.component }}-${{ needs.validate-version.outputs.version }}.tar.gz \
+              dist/ package.json src/ config/
+          elif [ "${{ matrix.component }}" = "frontend" ]; then
+            tar -czf ../${{ matrix.component }}-${{ needs.validate-version.outputs.version }}.tar.gz \
+              dist/ package.json src/ public/ index.html vite.config.ts
+          fi
+
+      - name: Upload release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.component }}-release-${{ needs.validate-version.outputs.version }}
+          path: ${{ matrix.component }}-${{ needs.validate-version.outputs.version }}.tar.gz
+
+  create-github-release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    needs: [validate-version, build-release-artifacts]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-artifacts
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ needs.validate-version.outputs.version }}
+          name: Release ${{ needs.validate-version.outputs.version }}
+          body: |
+            ## Changes
+            ${{ needs.validate-version.outputs.changelog }}
+            
+            ## Installation
+            
+            ### Smart Contracts
+            ```bash
+            wget https://github.com/${{ github.repository }}/releases/download/${{ needs.validate-version.outputs.version }}/contracts-${{ needs.validate-version.outputs.version }}.tar.gz
+            tar -xzf contracts-${{ needs.validate-version.outputs.version }}.tar.gz
+            ```
+            
+            ### Backend Services
+            ```bash
+            wget https://github.com/${{ github.repository }}/releases/download/${{ needs.validate-version.outputs.version }}/backend-${{ needs.validate-version.outputs.version }}.tar.gz
+            tar -xzf backend-${{ needs.validate-version.outputs.version }}.tar.gz
+            ```
+            
+            ### Frontend
+            ```bash
+            wget https://github.com/${{ github.repository }}/releases/download/${{ needs.validate-version.outputs.version }}/frontend-${{ needs.validate-version.outputs.version }}.tar.gz
+            tar -xzf frontend-${{ needs.validate-version.outputs.version }}.tar.gz
+            ```
+            
+            ## Docker Images
+            
+            - Relayer: `ghcr.io/${{ github.repository }}-relayer:${{ needs.validate-version.outputs.version }}`
+            - Resolver: `ghcr.io/${{ github.repository }}-resolver:${{ needs.validate-version.outputs.version }}`
+            - Frontend: `ghcr.io/${{ github.repository }}-frontend:${{ needs.validate-version.outputs.version }}`
+            
+            ## Deployment
+            
+            See [deployment documentation](https://github.com/${{ github.repository }}/blob/main/docs/deployment-procedures.md) for detailed deployment instructions.
+            
+            ## Verification
+            
+            All release artifacts are signed and can be verified using our public key.
+          draft: false
+          prerelease: ${{ inputs.prerelease || false }}
+          files: |
+            release-artifacts/**/*.tar.gz
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+  update-deployment-configs:
+    name: Update Deployment Configurations
+    runs-on: ubuntu-latest
+    needs: [validate-version, create-github-release]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Update version in deployment configs
+        run: |
+          VERSION=${{ needs.validate-version.outputs.version }}
+          
+          # Update version in package.json files
+          sed -i "s/\"version\": \".*\"/\"version\": \"${VERSION#v}\"/" package.json
+          sed -i "s/\"version\": \".*\"/\"version\": \"${VERSION#v}\"/" contracts/package.json
+          sed -i "s/\"version\": \".*\"/\"version\": \"${VERSION#v}\"/" backend/package.json
+          sed -i "s/\"version\": \".*\"/\"version\": \"${VERSION#v}\"/" frontend/package.json
+          
+          # Update version in deployment scripts
+          sed -i "s/VERSION=.*/VERSION=${VERSION}/" scripts/deploy-*.sh
+          
+          # Update Docker image tags in deployment configs
+          find infrastructure/ -name "*.yaml" -o -name "*.yml" | xargs sed -i "s/:latest/:${VERSION}/g"
+
+      - name: Create version update PR
+        uses: peter-evans/create-pull-request@v5
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          commit-message: "chore: update version to ${{ needs.validate-version.outputs.version }}"
+          title: "Update version configurations for ${{ needs.validate-version.outputs.version }}"
+          body: |
+            Automated version update for release ${{ needs.validate-version.outputs.version }}
+            
+            This PR updates:
+            - Package.json version fields
+            - Deployment script versions
+            - Docker image tags in infrastructure configs
+          branch: update-version-${{ needs.validate-version.outputs.version }}
+          delete-branch: true
+
+  notify-release:
+    name: Notify Release
+    runs-on: ubuntu-latest
+    needs: [validate-version, create-github-release]
+    if: always()
+    steps:
+      - name: Send Slack notification
+        uses: 8398a7/action-slack@v3
+        with:
+          status: custom
+          custom_payload: |
+            {
+              "text": "🚀 New release published",
+              "attachments": [
+                {
+                  "color": "good",
+                  "fields": [
+                    {
+                      "title": "Version",
+                      "value": "${{ needs.validate-version.outputs.version }}",
+                      "short": true
+                    },
+                    {
+                      "title": "Repository",
+                      "value": "${{ github.repository }}",
+                      "short": true
+                    },
+                    {
+                      "title": "Release URL",
+                      "value": "https://github.com/${{ github.repository }}/releases/tag/${{ needs.validate-version.outputs.version }}",
+                      "short": false
+                    }
+                  ],
+                  "actions": [
+                    {
+                      "type": "button",
+                      "text": "View Release",
+                      "url": "https://github.com/${{ github.repository }}/releases/tag/${{ needs.validate-version.outputs.version }}"
+                    }
+                  ]
+                }
+              ]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+
+  trigger-production-deployment:
+    name: Trigger Production Deployment
+    runs-on: ubuntu-latest
+    needs: [validate-version, create-github-release]
+    if: ${{ !inputs.prerelease }}
+    steps:
+      - name: Trigger production deployment workflow
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.actions.createWorkflowDispatch({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id: 'ci-cd-pipeline.yml',
+              ref: '${{ needs.validate-version.outputs.version }}',
+              inputs: {
+                environment: 'production',
+                skip_tests: 'false'
+              }
+            });

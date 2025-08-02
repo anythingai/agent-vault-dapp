@@ -1,0 +1,72 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: fusion-bitcoin
+  labels:
+    name: fusion-bitcoin
+    app: fusion-bitcoin-bridge
+    environment: production
+    version: "1.0.0"
+  annotations:
+    description: "1inch Fusion+ Cross-Chain Swap Extension to Bitcoin"
+    maintainer: "1inch Development Team"
+    created-by: "kubernetes"
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: fusion-bitcoin-quota
+  namespace: fusion-bitcoin
+spec:
+  hard:
+    requests.cpu: "4"
+    requests.memory: 8Gi
+    limits.cpu: "8"
+    limits.memory: 16Gi
+    pods: "20"
+    services: "10"
+    secrets: "20"
+    configmaps: "10"
+    persistentvolumeclaims: "5"
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: fusion-bitcoin-limits
+  namespace: fusion-bitcoin
+spec:
+  limits:
+  - default:
+      cpu: "1"
+      memory: "2Gi"
+    defaultRequest:
+      cpu: "100m"
+      memory: "128Mi"
+    type: Container
+  - default:
+      storage: "10Gi"
+    type: PersistentVolumeClaim
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: fusion-bitcoin-network-policy
+  namespace: fusion-bitcoin
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: ingress-nginx
+    - namespaceSelector:
+        matchLabels:
+          name: monitoring
+    - podSelector:
+        matchLabels:
+          app: fusion-bitcoin-bridge
+  egress:
+  - {}  # Allow all egress traffic

@@ -1,0 +1,68 @@
+# Base Kustomization for Fusion Bitcoin Bridge
+# Contains the base Kubernetes resources used by all environments
+
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+metadata:
+  name: fusion-bitcoin-base
+  annotations:
+    config.kubernetes.io/local-config: "true"
+
+# Base resources from the existing k8s directory
+resources:
+  - ../../../k8s/namespace.yaml
+  - ../../../k8s/configmap.yaml
+  - ../../../k8s/secrets.yaml
+  - ../../../k8s/deployments.yaml
+  - ../../../k8s/services.yaml
+  - ../../../k8s/ingress.yaml
+  - monitoring.yaml
+  - storage.yaml
+  - rbac.yaml
+
+# Common labels for all resources
+commonLabels:
+  app.kubernetes.io/name: fusion-bitcoin-bridge
+  app.kubernetes.io/part-of: fusion-bitcoin
+  app.kubernetes.io/managed-by: kustomize
+
+# Images used across environments
+images:
+  - name: registry.example.com/fusion-bitcoin-relayer
+    newTag: "1.0.0"
+  - name: registry.example.com/fusion-bitcoin-resolver
+    newTag: "1.0.0"
+  - name: registry.example.com/fusion-bitcoin-frontend
+    newTag: "1.0.0"
+
+# Generate additional ConfigMaps
+configMapGenerator:
+  - name: fusion-bitcoin-base-config
+    literals:
+      - BASE_CONFIG_VERSION=1.0.0
+    options:
+      disableNameSuffixHash: true
+
+# Replacements for environment-specific values
+replacements:
+  - source:
+      kind: ConfigMap
+      name: fusion-bitcoin-config
+      fieldPath: data.DB_HOST
+    targets:
+      - select:
+          kind: Deployment
+          name: fusion-bitcoin-relayer
+        fieldPaths:
+          - spec.template.spec.containers.[name=relayer].env.[name=DB_HOST].value
+      - select:
+          kind: Deployment
+          name: fusion-bitcoin-resolver
+        fieldPaths:
+          - spec.template.spec.containers.[name=resolver].env.[name=DB_HOST].value
+
+# Common annotations
+commonAnnotations:
+  config.kubernetes.io/origin: |
+    path: infrastructure/kubernetes/base/kustomization.yaml

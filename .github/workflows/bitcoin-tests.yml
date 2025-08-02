@@ -1,0 +1,286 @@
+name: Bitcoin HTLC Testing Suite
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+  schedule:
+    # Run tests daily at 6 AM UTC
+    - cron: '0 6 * * *'
+
+jobs:
+  bitcoin-unit-tests:
+    name: Bitcoin Unit Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    
+    strategy:
+      matrix:
+        node-version: [18.x, 20.x]
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Setup Node.js ${{ matrix.node-version }}
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ matrix.node-version }}
+        cache: 'npm'
+        
+    - name: Install Bitcoin Core
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y software-properties-common
+        sudo add-apt-repository ppa:bitcoin/bitcoin
+        sudo apt-get update
+        sudo apt-get install -y bitcoind bitcoin-cli
+        
+    - name: Verify Bitcoin installation
+      run: |
+        bitcoind --version
+        bitcoin-cli --version
+        
+    - name: Install dependencies
+      run: |
+        npm ci
+        cd tests && npm ci
+        
+    - name: Run Bitcoin HTLC unit tests
+      run: npm run test:bitcoin:unit
+      env:
+        BITCOIN_REGTEST_HOST: localhost
+        BITCOIN_REGTEST_PORT: 18443
+        BITCOIN_REGTEST_USER: test
+        BITCOIN_REGTEST_PASS: test
+        
+    - name: Run Bitcoin security tests
+      run: npm run test:bitcoin:security
+      
+    - name: Upload test results
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: bitcoin-test-results-${{ matrix.node-version }}
+        path: tests/coverage/
+        
+  bitcoin-integration-tests:
+    name: Bitcoin Integration Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    needs: bitcoin-unit-tests
+    
+    services:
+      bitcoin:
+        image: kylemanna/bitcoind
+        ports:
+          - 18443:18443
+        options: >-
+          --health-cmd="bitcoin-cli -regtest getblockchaininfo"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: 20.x
+        cache: 'npm'
+        
+    - name: Install dependencies
+      run: |
+        npm ci
+        cd tests && npm ci
+        cd ../contracts && npm ci
+        
+    - name: Setup Hardhat network
+      run: |
+        cd contracts
+        npx hardhat compile
+        
+    - name: Run integration tests
+      run: npm run test:bitcoin:integration
+      env:
+        BITCOIN_REGTEST_HOST: localhost
+        BITCOIN_REGTEST_PORT: 18443
+        BITCOIN_REGTEST_USER: bitcoin
+        BITCOIN_REGTEST_PASS: bitcoin
+        ETH_RPC_URL: http://localhost:8545
+        ETH_CHAIN_ID: 31337
+        
+    - name: Upload integration test results
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: integration-test-results
+        path: |
+          tests/coverage/
+          tests/reports/
+          
+  bitcoin-performance-tests:
+    name: Bitcoin Performance Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    needs: bitcoin-unit-tests
+    if: github.event_name == 'schedule' || contains(github.event.head_commit.message, '[perf-test]')
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: 20.x
+        cache: 'npm'
+        
+    - name: Install Bitcoin Core
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y bitcoind bitcoin-cli
+        
+    - name: Install dependencies
+      run: |
+        npm ci
+        cd tests && npm ci
+        
+    - name: Run performance tests
+      run: npm run test:bitcoin:performance
+      env:
+        BITCOIN_REGTEST_HOST: localhost
+        BITCOIN_REGTEST_PORT: 18443
+        BITCOIN_REGTEST_USER: test
+        BITCOIN_REGTEST_PASS: test
+        NODE_OPTIONS: --max-old-space-size=4096
+        
+    - name: Generate performance report
+      run: |
+        cd tests
+        npm run generate:performance-report
+        
+    - name: Upload performance results
+      uses: actions/upload-artifact@v4
+      with:
+        name: performance-test-results
+        path: |
+          tests/reports/performance/
+          tests/coverage/
+          
+  bitcoin-security-audit:
+    name: Bitcoin Security Audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: 20.x
+        cache: 'npm'
+        
+    - name: Install dependencies
+      run: |
+        npm ci
+        cd tests && npm ci
+        
+    - name: Run security audit
+      run: |
+        npm audit --audit-level moderate
+        cd tests && npm audit --audit-level moderate
+        
+    - name: Run Bitcoin security tests
+      run: npm run test:bitcoin:security
+      
+    - name: Check for hardcoded secrets
+      run: |
+        grep -r "private.*key.*=" backend/src/ tests/ || true
+        grep -r "secret.*=" backend/src/ tests/ || true
+        
+    - name: Upload security results
+      uses: actions/upload-artifact@v4
+      with:
+        name: security-audit-results
+        path: tests/reports/security/
+
+  test-coverage:
+    name: Test Coverage Report
+    runs-on: ubuntu-latest
+    needs: [bitcoin-unit-tests, bitcoin-integration-tests]
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: 20.x
+        cache: 'npm'
+        
+    - name: Install dependencies
+      run: |
+        npm ci
+        cd tests && npm ci
+        
+    - name: Install Bitcoin Core
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y bitcoind bitcoin-cli
+        
+    - name: Run tests with coverage
+      run: npm run test:bitcoin:coverage
+      env:
+        BITCOIN_REGTEST_HOST: localhost
+        BITCOIN_REGTEST_PORT: 18443
+        BITCOIN_REGTEST_USER: test
+        BITCOIN_REGTEST_PASS: test
+        
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v3
+      with:
+        file: ./tests/coverage/lcov.info
+        flags: bitcoin-tests
+        name: bitcoin-htlc-coverage
+        
+    - name: Comment coverage on PR
+      if: github.event_name == 'pull_request'
+      uses: romeovs/lcov-reporter-action@v0.3.1
+      with:
+        lcov-file: ./tests/coverage/lcov.info
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+
+  deploy-test-report:
+    name: Deploy Test Reports
+    runs-on: ubuntu-latest
+    needs: [bitcoin-unit-tests, bitcoin-integration-tests, bitcoin-performance-tests, test-coverage]
+    if: always() && github.ref == 'refs/heads/main'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Download all artifacts
+      uses: actions/download-artifact@v4
+      with:
+        path: ./artifacts
+        
+    - name: Generate consolidated report
+      run: |
+        mkdir -p ./public/reports
+        cp -r ./artifacts/* ./public/reports/
+        
+    - name: Deploy to GitHub Pages
+      uses: peaceiris/actions-gh-pages@v3
+      if: github.ref == 'refs/heads/main'
+      with:
+        github_token: ${{ secrets.GITHUB_TOKEN }}
+        publish_dir: ./public
+        destination_dir: test-reports

@@ -1,0 +1,33 @@
+{
+  "network": "hardhat",
+  "chainId": 1337,
+  "deployedAt": "2025-08-01T09:46:27.873Z",
+  "deployer": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+  "gasUsed": {
+    "EscrowFactory": "estimated",
+    "total": "estimated"
+  },
+  "contracts": {
+    "EscrowFactory": {
+      "address": "0x5FbDB2315678afecb367f032d93F642f64180aa3",
+      "verified": false
+    },
+    "EscrowSrcImplementation": {
+      "address": "0xa16E02E87b7454126E5E10d957A927A7F5B5d2be",
+      "verified": false
+    },
+    "EscrowDstImplementation": {
+      "address": "0xB7A5bd0345EF1Cc5E66bf61BdeC17D2461fBd968",
+      "verified": false
+    },
+    "TestToken": {
+      "address": "0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512",
+      "verified": false
+    }
+  },
+  "testTransaction": {
+    "hash": "0x98a708a8880ddbbe06da67115d510db144676045cc01089bfc15e9e40f7bfd64",
+    "escrowAddress": "0x3B100EDd1F97806174b9Fe59365ea730932879BB",
+    "status": "success"
+  }
+}

@@ -1,0 +1,351 @@
+# Production Environment Configuration Patches
+# Specific overrides for production environment
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fusion-bitcoin-config
+data:
+  # Application configuration for production
+  NODE_ENV: "production"
+  APP_NAME: "fusion-bitcoin-bridge"
+  APP_VERSION: "v1.0.0"
+  LOG_LEVEL: "warn"
+  
+  # Service ports
+  RELAYER_PORT: "3000"
+  RESOLVER_PORT: "3001" 
+  FRONTEND_PORT: "3002"
+  METRICS_PORT: "9090"
+  HEALTH_CHECK_PORT: "9091"
+  
+  # Network configuration for production
+  ETH_NETWORK: "mainnet"
+  BTC_NETWORK: "mainnet"
+  ETH_CONFIRMATION_BLOCKS: "12"
+  BTC_CONFIRMATION_BLOCKS: "6"
+  
+  # Database configuration for production (AWS RDS)
+  DB_TYPE: "postgresql"
+  DB_HOST: "fusion-bitcoin-prod-db.us-west-2.rds.amazonaws.com"
+  DB_PORT: "5432"
+  DB_NAME: "fusion_bitcoin_production"
+  DB_SSL: "require"
+  DB_POOL_MIN: "10"
+  DB_POOL_MAX: "50"
+  DB_CONNECTION_TIMEOUT: "30000"
+  DB_QUERY_TIMEOUT: "30000"
+  DB_STATEMENT_TIMEOUT: "60000"
+  
+  # Redis configuration for production (AWS ElastiCache)
+  REDIS_HOST: "fusion-bitcoin-prod-redis.xyz789.cache.amazonaws.com"
+  REDIS_PORT: "6379"
+  REDIS_DB: "0"
+  REDIS_KEY_PREFIX: "fusion:prod:"
+  REDIS_TTL_DEFAULT: "7200"
+  REDIS_MAX_MEMORY_POLICY: "allkeys-lru"
+  
+  # Security configuration for production
+  HTTPS_ENABLED: "true"
+  HTTPS_ONLY: "true"
+  CORS_ENABLED: "false"
+  CORS_ORIGINS: "https://fusion-bitcoin.1inch.io"
+  RATE_LIMITING_ENABLED: "true"
+  RATE_LIMIT_WINDOW_MS: "900000"
+  RATE_LIMIT_MAX_REQUESTS: "500"
+  RATE_LIMIT_SKIP_FAILED_REQUESTS: "true"
+  AUTHORIZATION_ENABLED: "true"
+  SECURITY_HEADERS_ENABLED: "true"
+  AUDIT_LOGGING_ENABLED: "true"
+  
+  # Monitoring configuration for production
+  METRICS_ENABLED: "true"
+  HEALTH_CHECK_ENABLED: "true"
+  PROMETHEUS_ENABLED: "true"
+  PROMETHEUS_ENDPOINT: "/metrics"
+  SENTRY_ENABLED: "true"
+  SENTRY_ENVIRONMENT: "production"
+  SENTRY_TRACES_SAMPLE_RATE: "0.1"
+  APM_ENABLED: "true"
+  
+  # Backup configuration for production
+  BACKUP_ENABLED: "true"
+  BACKUP_SCHEDULE: "0 1 * * *"
+  BACKUP_RETENTION_DAYS: "30"
+  BACKUP_ENCRYPTION_ENABLED: "true"
+  S3_BACKUP_BUCKET: "fusion-bitcoin-production-backups"
+  
+  # Feature flags for production
+  ADVANCED_TRADING_ENABLED: "true"
+  NOTIFICATIONS_ENABLED: "true"
+  DARK_MODE_ENABLED: "true"
+  ANALYTICS_ENABLED: "true"
+  DEBUG_MODE_ENABLED: "false"
+  MAINTENANCE_MODE_ENABLED: "false"
+  
+  # AWS specific configuration for production
+  AWS_REGION: "us-west-2"
+  AWS_S3_BUCKET: "fusion-bitcoin-production-assets"
+  AWS_CLOUDFRONT_DOMAIN: "cdn.fusion-bitcoin.1inch.io"
+  AWS_SQS_QUEUE: "fusion-bitcoin-production-queue"
+  AWS_SNS_TOPIC: "fusion-bitcoin-production-alerts"
+  
+  # External API configuration for production
+  ETH_RPC_TIMEOUT: "15000"
+  BTC_RPC_TIMEOUT: "20000"
+  BLOCKCHAIN_SYNC_INTERVAL: "10000"
+  API_RETRY_ATTEMPTS: "3"
+  API_RETRY_DELAY: "1000"
+  
+  # Performance tuning for production
+  MAX_CONCURRENT_REQUESTS: "200"
+  REQUEST_TIMEOUT: "60000"
+  KEEPALIVE_TIMEOUT: "30000"
+  GRACEFUL_SHUTDOWN_TIMEOUT: "30000"
+  WORKER_PROCESSES: "auto"
+  
+  # Circuit breaker configuration
+  CIRCUIT_BREAKER_ENABLED: "true"
+  CIRCUIT_BREAKER_FAILURE_THRESHOLD: "50"
+  CIRCUIT_BREAKER_TIMEOUT: "60000"
+  CIRCUIT_BREAKER_MONITOR_TIMEOUT: "5000"
+  
+  # Caching configuration
+  CACHE_ENABLED: "true"
+  CACHE_TTL: "300"
+  CACHE_MAX_SIZE: "1000"
+  REDIS_CACHE_ENABLED: "true"
+  
+  # Logging configuration for production
+  LOG_FORMAT: "json"
+  LOG_MAX_FILES: "30"
+  LOG_MAX_SIZE: "100m"
+  ACCESS_LOG_ENABLED: "true"
+  ERROR_LOG_ENABLED: "true"
+  AUDIT_LOG_ENABLED: "true"
+  LOG_SAMPLING_ENABLED: "true"
+  LOG_SAMPLING_RATE: "0.1"
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: fusion-bitcoin-loadbalancer
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-type: "alb"
+    service.beta.kubernetes.io/aws-load-balancer-scheme: "internet-facing"
+    service.beta.kubernetes.io/aws-load-balancer-ssl-cert: "arn:aws:acm:us-west-2:123456789012:certificate/production-cert-id"
+    service.beta.kubernetes.io/aws-load-balancer-ssl-ports: "https"
+    service.beta.kubernetes.io/aws-load-balancer-backend-protocol: "http"
+    service.beta.kubernetes.io/aws-load-balancer-ssl-policy: "ELBSecurityPolicy-TLS-1-2-2017-01"
+    service.beta.kubernetes.io/aws-load-balancer-security-groups: "sg-production-alb"
+    service.beta.kubernetes.io/aws-load-balancer-subnets: "subnet-prod-1,subnet-prod-2,subnet-prod-3"
+    service.beta.kubernetes.io/aws-load-balancer-cross-zone-load-balancing-enabled: "true"
+spec:
+  type: LoadBalancer
+  ports:
+  - name: https
+    port: 443
+    targetPort: 3002
+    protocol: TCP
+  - name: api-https
+    port: 8443
+    targetPort: 3000
+    protocol: TCP
+  selector:
+    app: fusion-bitcoin-bridge
+    component: frontend
+
+---
+# HorizontalPodAutoscaler for production
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: fusion-bitcoin-relayer-hpa
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: fusion-bitcoin-relayer
+  minReplicas: 5
+  maxReplicas: 20
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 60
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Pods
+    pods:
+      metric:
+        name: http_requests_per_second
+      target:
+        type: AverageValue
+        averageValue: "100"
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      policies:
+      - type: Percent
+        value: 100
+        periodSeconds: 15
+      - type: Pods
+        value: 4
+        periodSeconds: 15
+      selectPolicy: Max
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+      - type: Percent
+        value: 10
+        periodSeconds: 60
+
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: fusion-bitcoin-resolver-hpa
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: fusion-bitcoin-resolver
+  minReplicas: 3
+  maxReplicas: 10
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 60
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 70
+
+---
+# PodDisruptionBudget for high availability in production
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: fusion-bitcoin-relayer-pdb
+spec:
+  minAvailable: 3
+  selector:
+    matchLabels:
+      app: fusion-bitcoin-bridge
+      component: relayer
+
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: fusion-bitcoin-resolver-pdb
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: fusion-bitcoin-bridge
+      component: resolver
+
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: fusion-bitcoin-frontend-pdb
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: fusion-bitcoin-bridge
+      component: frontend
+
+---
+# ServiceMonitor for Prometheus monitoring
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: fusion-bitcoin-monitor
+  labels:
+    app: fusion-bitcoin-bridge
+spec:
+  selector:
+    matchLabels:
+      app: fusion-bitcoin-bridge
+  endpoints:
+  - port: metrics
+    interval: 30s
+    path: /metrics
+    honorLabels: true
+
+---
+# PrometheusRule for alerting
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: fusion-bitcoin-alerts
+  labels:
+    app: fusion-bitcoin-bridge
+spec:
+  groups:
+  - name: fusion-bitcoin.rules
+    rules:
+    - alert: HighErrorRate
+      expr: rate(http_requests_total{status=~"5.."}[5m]) > 0.05
+      for: 5m
+      labels:
+        severity: critical
+      annotations:
+        summary: "High error rate detected"
+        description: "Error rate is {{ $value }} for {{ $labels.instance }}"
+    
+    - alert: HighLatency
+      expr: histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m])) > 1
+      for: 5m
+      labels:
+        severity: warning
+      annotations:
+        summary: "High latency detected"
+        description: "95th percentile latency is {{ $value }}s for {{ $labels.instance }}"
+    
+    - alert: DatabaseConnectionsHigh
+      expr: pg_stat_activity_count > 40
+      for: 5m
+      labels:
+        severity: warning
+      annotations:
+        summary: "High database connections"
+        description: "Database has {{ $value }} active connections"
+
+---
+# VerticalPodAutoscaler for resource optimization (if VPA is installed)
+apiVersion: autoscaling.k8s.io/v1
+kind: VerticalPodAutoscaler
+metadata:
+  name: fusion-bitcoin-relayer-vpa
+spec:
+  targetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: fusion-bitcoin-relayer
+  updatePolicy:
+    updateMode: "Auto"
+  resourcePolicy:
+    containerPolicies:
+    - containerName: relayer
+      minAllowed:
+        cpu: 100m
+        memory: 128Mi
+      maxAllowed:
+        cpu: 4000m
+        memory: 8Gi

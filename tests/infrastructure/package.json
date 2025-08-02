@@ -1,0 +1,71 @@
+{
+  "name": "fusion-bitcoin-infrastructure-tests",
+  "version": "1.0.0",
+  "description": "Infrastructure tests for Fusion Bitcoin Bridge",
+  "main": "index.js",
+  "scripts": {
+    "test": "jest",
+    "test:terraform": "jest terraform/",
+    "test:kubernetes": "jest kubernetes/",
+    "test:docker": "jest docker/",
+    "test:integration": "jest integration/",
+    "test:watch": "jest --watch",
+    "test:coverage": "jest --coverage",
+    "test:ci": "jest --ci --coverage --reporters=default --reporters=jest-junit",
+    "validate:all": "npm run test:terraform && npm run test:kubernetes && npm run test:docker",
+    "lint": "eslint . --ext .js",
+    "pretest": "npm run validate-prerequisites"
+  },
+  "keywords": [
+    "infrastructure",
+    "terraform",
+    "kubernetes", 
+    "docker",
+    "testing"
+  ],
+  "author": "Fusion Bitcoin Team",
+  "license": "MIT",
+  "devDependencies": {
+    "jest": "^29.0.0",
+    "jest-junit": "^16.0.0",
+    "js-yaml": "^4.1.0",
+    "eslint": "^8.0.0"
+  },
+  "jest": {
+    "testEnvironment": "node",
+    "testMatch": [
+      "**/__tests__/**/*.js",
+      "**/?(*.)+(spec|test).js"
+    ],
+    "testPathIgnorePatterns": [
+      "/node_modules/",
+      "/build/",
+      "/dist/"
+    ],
+    "coverageDirectory": "coverage",
+    "collectCoverageFrom": [
+      "**/*.js",
+      "!**/node_modules/**",
+      "!**/coverage/**"
+    ],
+    "testTimeout": 300000,
+    "setupFilesAfterEnv": ["<rootDir>/jest.setup.js"]
+  },
+  "eslintConfig": {
+    "env": {
+      "node": true,
+      "jest": true,
+      "es6": true
+    },
+    "extends": [
+      "eslint:recommended"
+    ],
+    "parserOptions": {
+      "ecmaVersion": 2020
+    },
+    "rules": {
+      "no-console": "warn",
+      "no-unused-vars": "error"
+    }
+  }
+}

@@ -1,0 +1,247 @@
+# RBAC Configuration for Fusion Bitcoin Bridge
+# Role-based access control for Kubernetes resources
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: fusion-bitcoin-service-account
+  namespace: fusion-bitcoin
+  labels:
+    app.kubernetes.io/name: fusion-bitcoin-bridge
+    app.kubernetes.io/component: security
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: fusion-bitcoin-role
+  namespace: fusion-bitcoin
+  labels:
+    app.kubernetes.io/name: fusion-bitcoin-bridge
+    app.kubernetes.io/component: security
+rules:
+- apiGroups: [""]
+  resources: ["pods", "services", "endpoints", "configmaps", "secrets"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+- apiGroups: ["apps"]
+  resources: ["deployments", "replicasets"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+- apiGroups: ["networking.k8s.io"]
+  resources: ["ingresses"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+- apiGroups: ["batch"]
+  resources: ["jobs", "cronjobs"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: fusion-bitcoin-role-binding
+  namespace: fusion-bitcoin
+  labels:
+    app.kubernetes.io/name: fusion-bitcoin-bridge
+    app.kubernetes.io/component: security
+subjects:
+- kind: ServiceAccount
+  name: fusion-bitcoin-service-account
+  namespace: fusion-bitcoin
+roleRef:
+  kind: Role
+  name: fusion-bitcoin-role
+  apiGroup: rbac.authorization.k8s.io
+---
+# Service Account for Backup Operations
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: fusion-bitcoin-backup-service-account
+  namespace: fusion-bitcoin
+  labels:
+    app.kubernetes.io/name: fusion-bitcoin-bridge
+    app.kubernetes.io/component: backup
+  annotations:
+    eks.amazonaws.com/role-arn: arn:aws:iam::ACCOUNT_ID:role/fusion-bitcoin-backup-role
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: fusion-bitcoin-backup-role
+  namespace: fusion-bitcoin
+  labels:
+    app.kubernetes.io/name: fusion-bitcoin-bridge
+    app.kubernetes.io/component: backup
+rules:
+- apiGroups: [""]
+  resources: ["pods", "secrets", "configmaps"]
+  verbs: ["get", "list"]
+- apiGroups: [""]
+  resources: ["pods/exec"]
+  verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: fusion-bitcoin-backup-role-binding
+  namespace: fusion-bitcoin
+  labels:
+    app.kubernetes.io/name: fusion-bitcoin-bridge
+    app.kubernetes.io/component: backup
+subjects:
+- kind: ServiceAccount
+  name: fusion-bitcoin-backup-service-account
+  namespace: fusion-bitcoin
+roleRef:
+  kind: Role
+  name: fusion-bitcoin-backup-role
+  apiGroup: rbac.authorization.k8s.io
+---
+# Service Account for Monitoring
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: fusion-bitcoin-monitoring-service-account
+  namespace: fusion-bitcoin
+  labels:
+    app.kubernetes.io/name: fusion-bitcoin-bridge
+    app.kubernetes.io/component: monitoring
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: fusion-bitcoin-monitoring-cluster-role
+  labels:
+    app.kubernetes.io/name: fusion-bitcoin-bridge
+    app.kubernetes.io/component: monitoring
+rules:
+- apiGroups: [""]
+  resources: ["nodes", "nodes/proxy", "services", "endpoints", "pods", "ingresses", "configmaps"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["extensions", "networking.k8s.io"]
+  resources: ["ingresses"]
+  verbs: ["get", "list", "watch"]
+- nonResourceURLs: ["/metrics"]
+  verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: fusion-bitcoin-monitoring-cluster-role-binding
+  labels:
+    app.kubernetes.io/name: fusion-bitcoin-bridge
+    app.kubernetes.io/component: monitoring
+subjects:
+- kind: ServiceAccount
+  name: fusion-bitcoin-monitoring-service-account
+  namespace: fusion-bitcoin
+roleRef:
+  kind: ClusterRole
+  name: fusion-bitcoin-monitoring-cluster-role
+  apiGroup: rbac.authorization.k8s.io
+---
+# Network Policy for Security
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: fusion-bitcoin-network-policy
+  namespace: fusion-bitcoin
+  labels:
+    app.kubernetes.io/name: fusion-bitcoin-bridge
+    app.kubernetes.io/component: security
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: fusion-bitcoin-bridge
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: fusion-bitcoin
+    - podSelector:
+        matchLabels:
+          app.kubernetes.io/name: fusion-bitcoin-bridge
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: kube-system
+  - from: []
+    ports:
+    - protocol: TCP
+      port: 80
+    - protocol: TCP
+      port: 443
+    - protocol: TCP
+      port: 3000
+    - protocol: TCP
+      port: 3001
+    - protocol: TCP
+      port: 3002
+  egress:
+  - {}  # Allow all egress traffic
+---
+# Pod Security Policy (if enabled in cluster)
+apiVersion: policy/v1beta1
+kind: PodSecurityPolicy
+metadata:
+  name: fusion-bitcoin-psp
+  labels:
+    app.kubernetes.io/name: fusion-bitcoin-bridge
+    app.kubernetes.io/component: security
+spec:
+  privileged: false
+  allowPrivilegeEscalation: false
+  requiredDropCapabilities:
+    - ALL
+  volumes:
+    - 'configMap'
+    - 'emptyDir'
+    - 'projected'
+    - 'secret'
+    - 'downwardAPI'
+    - 'persistentVolumeClaim'
+  runAsUser:
+    rule: 'MustRunAsNonRoot'
+  seLinux:
+    rule: 'RunAsAny'
+  fsGroup:
+    rule: 'RunAsAny'
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: fusion-bitcoin-psp-role
+  namespace: fusion-bitcoin
+  labels:
+    app.kubernetes.io/name: fusion-bitcoin-bridge
+    app.kubernetes.io/component: security
+rules:
+- apiGroups: ['policy']
+  resources: ['podsecuritypolicies']
+  verbs: ['use']
+  resourceNames:
+  - fusion-bitcoin-psp
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: fusion-bitcoin-psp-role-binding
+  namespace: fusion-bitcoin
+  labels:
+    app.kubernetes.io/name: fusion-bitcoin-bridge
+    app.kubernetes.io/component: security
+roleRef:
+  kind: Role
+  name: fusion-bitcoin-psp-role
+  apiGroup: rbac.authorization.k8s.io
+subjects:
+- kind: ServiceAccount
+  name: fusion-bitcoin-service-account
+  namespace: fusion-bitcoin
+- kind: ServiceAccount
+  name: fusion-bitcoin-backup-service-account
+  namespace: fusion-bitcoin
+- kind: ServiceAccount
+  name: fusion-bitcoin-monitoring-service-account
+  namespace: fusion-bitcoin

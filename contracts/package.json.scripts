@@ -1,0 +1,70 @@
+{
+  "scripts": {
+    "build": "hardhat compile",
+    "build:mainnet": "hardhat compile --optimizer-runs 200",
+    "build:testnet": "hardhat compile --optimizer-runs 100",
+    
+    "test": "hardhat test",
+    "test:coverage": "hardhat coverage",
+    "test:gas": "REPORT_GAS=true hardhat test",
+    "test:integration": "hardhat test --grep 'Integration'",
+    "test:integration:quick": "hardhat test test/integration/quick.test.js",
+    "test:comprehensive": "hardhat test && npm run test:coverage",
+    "test:mainnet-fork": "hardhat test --fork mainnet",
+    
+    "deploy:local": "hardhat run scripts/deploy-automated.ts --network localhost local",
+    "deploy:testnet": "hardhat run scripts/deploy-automated.ts --network sepolia testnet",
+    "deploy:mainnet": "hardhat run scripts/deploy-automated.ts --network mainnet mainnet --safety-checks",
+    
+    "deploy:enhanced": "hardhat run scripts/deploy-enhanced.js",
+    "deploy:enhanced:testnet": "hardhat run scripts/deploy-enhanced.js --network sepolia",
+    "deploy:enhanced:mainnet": "hardhat run scripts/deploy-enhanced.js --network mainnet",
+    
+    "verify": "hardhat run scripts/verify-contracts.js",
+    "verify:testnet": "hardhat run scripts/verify-contracts.js --network sepolia",
+    "verify:mainnet": "hardhat run scripts/verify-contracts.js --network mainnet",
+    
+    "upgrade": "hardhat run scripts/contract-upgrade-manager.ts --",
+    "upgrade:testnet": "npm run upgrade -- upgrade sepolia",
+    "upgrade:mainnet": "npm run upgrade -- upgrade mainnet",
+    
+    "test:automated": "hardhat run scripts/contract-testing-automation.ts --",
+    "test:automated:local": "npm run test:automated -- local localhost",
+    "test:automated:testnet": "npm run test:automated -- testnet sepolia",
+    "test:automated:mainnet": "npm run test:automated -- mainnet mainnet --skip-performance",
+    
+    "security:analyze": "slither .",
+    "security:mythril": "myth analyze contracts/",
+    "security:scan": "npm run security:analyze && npm run security:mythril",
+    
+    "gas:analyze": "hardhat test --reporter gas",
+    "gas:report": "REPORT_GAS=true hardhat test",
+    
+    "clean": "hardhat clean && rm -rf artifacts cache",
+    "compile": "npm run build",
+    "node": "hardhat node",
+    "console": "hardhat console",
+    
+    "lint": "solhint 'contracts/**/*.sol'",
+    "lint:fix": "solhint 'contracts/**/*.sol' --fix",
+    
+    "format": "prettier --write 'contracts/**/*.sol' 'scripts/**/*.{js,ts}'",
+    "format:check": "prettier --check 'contracts/**/*.sol' 'scripts/**/*.{js,ts}'",
+    
+    "validate": "npm run lint && npm run format:check && npm run test",
+    "validate:full": "npm run clean && npm run validate && npm run test:coverage",
+    
+    "docs": "hardhat docgen",
+    "docs:serve": "cd docs && python -m http.server 8080",
+    
+    "prepare:local": "npm run clean && npm run build && npm run deploy:local",
+    "prepare:testnet": "npm run clean && npm run build && npm run deploy:testnet && npm run verify:testnet",
+    "prepare:mainnet": "npm run validate:full && npm run build:mainnet && npm run deploy:mainnet && npm run verify:mainnet"
+  },
+  
+  "config": {
+    "defaultNetwork": "hardhat",
+    "gasPrice": "auto",
+    "gasLimit": "auto"
+  }
+}

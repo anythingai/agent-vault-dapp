@@ -1,0 +1,352 @@
+# Kustomization for Production Environment
+# Manages environment-specific configurations for production
+
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+metadata:
+  name: fusion-bitcoin-production
+  annotations:
+    config.kubernetes.io/local-config: "true"
+
+# Base resources
+resources:
+  - ../../base
+
+# Namespace
+namespace: fusion-bitcoin
+
+# Name prefix for all resources (no prefix for production)
+namePrefix: ""
+
+# Common labels applied to all resources
+commonLabels:
+  app.kubernetes.io/name: fusion-bitcoin-bridge
+  app.kubernetes.io/instance: production
+  app.kubernetes.io/component: infrastructure
+  app.kubernetes.io/part-of: fusion-bitcoin
+  app.kubernetes.io/managed-by: kustomize
+  environment: production
+
+# Common annotations
+commonAnnotations:
+  deployment.kubernetes.io/revision: "1"
+  config.kubernetes.io/origin: |
+    path: infrastructure/kubernetes/environments/production/kustomization.yaml
+
+# Images with production tags
+images:
+  - name: registry.example.com/fusion-bitcoin-relayer
+    newTag: v1.0.0
+  - name: registry.example.com/fusion-bitcoin-resolver
+    newTag: v1.0.0
+  - name: registry.example.com/fusion-bitcoin-frontend
+    newTag: v1.0.0
+
+# Resource patches for production environment
+patches:
+  # Set appropriate replica counts for production
+  - patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 5
+    target:
+      kind: Deployment
+      name: fusion-bitcoin-relayer
+  
+  - patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 3
+    target:
+      kind: Deployment
+      name: fusion-bitcoin-resolver
+  
+  - patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 3
+    target:
+      kind: Deployment
+      name: fusion-bitcoin-frontend
+
+  # Set production resource requests and limits
+  - patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/cpu
+        value: "500m"
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/memory
+        value: "1Gi"
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/limits/cpu
+        value: "2000m"
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/limits/memory
+        value: "4Gi"
+    target:
+      kind: Deployment
+      name: fusion-bitcoin-relayer
+
+  - patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/cpu
+        value: "300m"
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/memory
+        value: "512Mi"
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/limits/cpu
+        value: "1000m"
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/limits/memory
+        value: "2Gi"
+    target:
+      kind: Deployment
+      name: fusion-bitcoin-resolver
+
+  # Add production security context
+  - patch: |-
+      - op: add
+        path: /spec/template/spec/securityContext
+        value:
+          runAsNonRoot: true
+          runAsUser: 10001
+          fsGroup: 10001
+          seccompProfile:
+            type: RuntimeDefault
+      - op: add
+        path: /spec/template/spec/containers/0/securityContext
+        value:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          runAsUser: 10001
+          capabilities:
+            drop:
+            - ALL
+    target:
+      kind: Deployment
+
+  # Add production readiness and liveness probes
+  - patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/readinessProbe
+        value:
+          httpGet:
+            path: /health/ready
+            port: 3000
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 3
+          successThreshold: 1
+          failureThreshold: 3
+      - op: add
+        path: /spec/template/spec/containers/0/livenessProbe
+        value:
+          httpGet:
+            path: /health/live
+            port: 3000
+          initialDelaySeconds: 30
+          periodSeconds: 30
+          timeoutSeconds: 5
+          successThreshold: 1
+          failureThreshold: 3
+    target:
+      kind: Deployment
+
+# ConfigMap patches for production environment
+patchesStrategicMerge:
+  - production-config.yaml
+
+# Generate ConfigMap for production-specific configuration
+configMapGenerator:
+  - name: fusion-bitcoin-production-config
+    literals:
+      - NODE_ENV=production
+      - LOG_LEVEL=warn
+      - DB_HOST=fusion-bitcoin-prod-db.us-west-2.rds.amazonaws.com
+      - DB_PORT=5432
+      - REDIS_HOST=fusion-bitcoin-prod-redis.xyz789.cache.amazonaws.com
+      - REDIS_PORT=6379
+      - METRICS_ENABLED=true
+      - HEALTH_CHECK_ENABLED=true
+      - BACKUP_ENABLED=true
+      - ETH_NETWORK=mainnet
+      - BTC_NETWORK=mainnet
+      - RATE_LIMITING_ENABLED=true
+      - CORS_ENABLED=false
+      - HTTPS_ENABLED=true
+      - SECURITY_HEADERS_ENABLED=true
+      - AUDIT_LOGGING_ENABLED=true
+    options:
+      disableNameSuffixHash: true
+
+# Generate Secret for production environment (use external-secrets in real production)
+secretGenerator:
+  - name: fusion-bitcoin-production-secrets
+    literals:
+      - DB_PASSWORD=ENC[AES256_GCM,production-db-password]
+      - REDIS_PASSWORD=ENC[AES256_GCM,production-redis-password]
+      - JWT_SECRET=ENC[AES256_GCM,production-jwt-secret]
+      - API_SECRET=ENC[AES256_GCM,production-api-secret]
+      - ETH_PRIVATE_KEY=ENC[AES256_GCM,production-eth-private-key]
+      - BTC_PRIVATE_KEY=ENC[AES256_GCM,production-btc-private-key]
+      - ENCRYPTION_KEY=ENC[AES256_GCM,production-encryption-key]
+    type: Opaque
+    options:
+      disableNameSuffixHash: true
+
+# Transformers
+transformers:
+  # Add production-specific labels and annotations
+  - |-
+    apiVersion: builtin
+    kind: LabelTransformer
+    metadata:
+      name: production-labels
+    labels:
+      deployment.environment: production
+      cost-center: production
+      monitoring.enabled: "true"
+      backup.enabled: "true"
+      security.level: "high"
+      compliance.required: "true"
+    fieldSpecs:
+      - path: metadata/labels
+        create: true
+
+# Replicas configuration for production
+replicas:
+  - name: fusion-bitcoin-relayer
+    count: 5
+  - name: fusion-bitcoin-resolver
+    count: 3
+  - name: fusion-bitcoin-frontend
+    count: 3
+  - name: prometheus
+    count: 2
+  - name: grafana
+    count: 1
+
+# JSON patches for complex production modifications
+patchesJson6902:
+  # Add production-specific environment variables and configurations
+  - target:
+      kind: Deployment
+      name: fusion-bitcoin-relayer
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value:
+          name: ENVIRONMENT_TIER
+          value: production
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value:
+          name: PERFORMANCE_MONITORING
+          value: "true"
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value:
+          name: AUDIT_LOGGING
+          value: "true"
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value:
+          name: CIRCUIT_BREAKER_ENABLED
+          value: "true"
+
+  # Add node affinity for production workloads
+  - target:
+      kind: Deployment
+    patch: |-
+      - op: add
+        path: /spec/template/spec/affinity
+        value:
+          nodeAffinity:
+            requiredDuringSchedulingIgnoredDuringExecution:
+              nodeSelectorTerms:
+              - matchExpressions:
+                - key: node.kubernetes.io/instance-type
+                  operator: In
+                  values:
+                  - c5.xlarge
+                  - c5.2xlarge
+                  - m5.xlarge
+                  - m5.2xlarge
+            preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              preference:
+                matchExpressions:
+                - key: topology.kubernetes.io/zone
+                  operator: In
+                  values:
+                  - us-west-2a
+                  - us-west-2b
+                  - us-west-2c
+          podAntiAffinity:
+            preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchExpressions:
+                  - key: app.kubernetes.io/name
+                    operator: In
+                    values:
+                    - fusion-bitcoin-bridge
+                topologyKey: kubernetes.io/hostname
+
+  # Add production tolerations
+  - target:
+      kind: Deployment
+    patch: |-
+      - op: add
+        path: /spec/template/spec/tolerations
+        value:
+        - key: "dedicated"
+          operator: "Equal"
+          value: "production"
+          effect: "NoSchedule"
+
+  # Add production init containers for health checks
+  - target:
+      kind: Deployment
+      name: fusion-bitcoin-relayer
+    patch: |-
+      - op: add
+        path: /spec/template/spec/initContainers
+        value:
+        - name: db-migration-check
+          image: postgres:15-alpine
+          command: ['sh', '-c', 'until pg_isready -h $DB_HOST -p $DB_PORT -U $DB_USER; do echo waiting for database; sleep 2; done;']
+          env:
+          - name: DB_HOST
+            valueFrom:
+              configMapKeyRef:
+                name: fusion-bitcoin-config
+                key: DB_HOST
+          - name: DB_PORT
+            valueFrom:
+              configMapKeyRef:
+                name: fusion-bitcoin-config
+                key: DB_PORT
+          - name: DB_USER
+            valueFrom:
+              secretKeyRef:
+                name: fusion-bitcoin-db-secret
+                key: username
+        - name: redis-check
+          image: redis:7-alpine
+          command: ['sh', '-c', 'until redis-cli -h $REDIS_HOST -p $REDIS_PORT ping; do echo waiting for redis; sleep 2; done;']
+          env:
+          - name: REDIS_HOST
+            valueFrom:
+              configMapKeyRef:
+                name: fusion-bitcoin-config
+                key: REDIS_HOST
+          - name: REDIS_PORT
+            valueFrom:
+              configMapKeyRef:
+                name: fusion-bitcoin-config
+                key: REDIS_PORT

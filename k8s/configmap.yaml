@@ -1,0 +1,315 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fusion-bitcoin-config
+  namespace: fusion-bitcoin
+  labels:
+    app: fusion-bitcoin-bridge
+    component: config
+    environment: production
+data:
+  # Application configuration
+  NODE_ENV: "production"
+  APP_NAME: "fusion-bitcoin-bridge"
+  APP_VERSION: "1.0.0"
+  LOG_LEVEL: "info"
+  
+  # Service ports
+  RELAYER_PORT: "3000"
+  RESOLVER_PORT: "3001" 
+  FRONTEND_PORT: "3002"
+  METRICS_PORT: "9090"
+  HEALTH_CHECK_PORT: "9091"
+  
+  # Network configuration
+  ETH_NETWORK: "mainnet"
+  BTC_NETWORK: "mainnet"
+  ETH_CONFIRMATION_BLOCKS: "12"
+  BTC_CONFIRMATION_BLOCKS: "6"
+  
+  # Database configuration
+  DB_TYPE: "postgresql"
+  DB_HOST: "fusion-bitcoin-postgres"
+  DB_PORT: "5432"
+  DB_NAME: "fusion_bitcoin"
+  DB_SSL: "true"
+  DB_POOL_MIN: "5"
+  DB_POOL_MAX: "20"
+  DB_CONNECTION_TIMEOUT: "60000"
+  DB_QUERY_TIMEOUT: "30000"
+  
+  # Redis configuration
+  REDIS_HOST: "fusion-bitcoin-redis"
+  REDIS_PORT: "6379"
+  REDIS_DB: "0"
+  REDIS_KEY_PREFIX: "fusion:"
+  
+  # Security configuration
+  HTTPS_ENABLED: "true"
+  CORS_ENABLED: "true"
+  RATE_LIMITING_ENABLED: "true"
+  RATE_LIMIT_WINDOW_MS: "900000"
+  RATE_LIMIT_MAX_REQUESTS: "1000"
+  AUTHORIZATION_ENABLED: "true"
+  
+  # Monitoring configuration
+  METRICS_ENABLED: "true"
+  HEALTH_CHECK_ENABLED: "true"
+  PROMETHEUS_ENABLED: "true"
+  SENTRY_ENABLED: "true"
+  
+  # Backup configuration
+  BACKUP_ENABLED: "true"
+  BACKUP_INTERVAL_HOURS: "6"
+  BACKUP_RETENTION_DAYS: "30"
+  
+  # Feature flags
+  ADVANCED_TRADING_ENABLED: "true"
+  NOTIFICATIONS_ENABLED: "true"
+  DARK_MODE_ENABLED: "true"
+  ANALYTICS_ENABLED: "true"
+  
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fusion-bitcoin-networks
+  namespace: fusion-bitcoin
+  labels:
+    app: fusion-bitcoin-bridge
+    component: networks
+    environment: production
+data:
+  networks.json: |
+    {
+      "ethereum": {
+        "mainnet": {
+          "chainId": 1,
+          "name": "Ethereum Mainnet",
+          "gasPrice": "auto",
+          "gasMultiplier": 1.2,
+          "timeout": 60000,
+          "confirmationBlocks": 12,
+          "contracts": {
+            "fusionResolver": "0x0000000000000000000000000000000000000000",
+            "bitcoinBridge": "0x0000000000000000000000000000000000000000"
+          }
+        },
+        "goerli": {
+          "chainId": 5,
+          "name": "Goerli Testnet", 
+          "gasPrice": "auto",
+          "gasMultiplier": 1.5,
+          "timeout": 120000,
+          "confirmationBlocks": 1,
+          "contracts": {
+            "fusionResolver": "0x0000000000000000000000000000000000000000",
+            "bitcoinBridge": "0x0000000000000000000000000000000000000000"
+          }
+        }
+      },
+      "bitcoin": {
+        "mainnet": {
+          "name": "Bitcoin Mainnet",
+          "confirmationBlocks": 6,
+          "timeout": 300000,
+          "dustThreshold": 546
+        },
+        "testnet": {
+          "name": "Bitcoin Testnet",
+          "confirmationBlocks": 1, 
+          "timeout": 300000,
+          "dustThreshold": 546
+        }
+      }
+    }
+    
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fusion-bitcoin-nginx
+  namespace: fusion-bitcoin
+  labels:
+    app: fusion-bitcoin-bridge
+    component: nginx
+    environment: production
+data:
+  nginx.conf: |
+    worker_processes auto;
+    error_log /var/log/nginx/error.log warn;
+    pid /var/run/nginx/nginx.pid;
+    
+    events {
+        worker_connections 1024;
+        use epoll;
+        multi_accept on;
+    }
+    
+    http {
+        include /etc/nginx/mime.types;
+        default_type application/octet-stream;
+        
+        log_format main '$remote_addr - $remote_user [$time_local] "$request" '
+                        '$status $body_bytes_sent "$http_referer" '
+                        '"$http_user_agent" "$http_x_forwarded_for" '
+                        '$request_time $upstream_response_time';
+        
+        access_log /var/log/nginx/access.log main;
+        
+        sendfile on;
+        tcp_nopush on;
+        tcp_nodelay on;
+        keepalive_timeout 65;
+        types_hash_max_size 2048;
+        client_max_body_size 16M;
+        
+        # Security headers
+        add_header X-Frame-Options "SAMEORIGIN" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header X-XSS-Protection "1; mode=block" always;
+        add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+        add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+        
+        # Gzip compression
+        gzip on;
+        gzip_vary on;
+        gzip_min_length 1024;
+        gzip_comp_level 6;
+        gzip_types text/plain text/css application/json application/javascript text/xml application/xml application/xml+rss text/javascript;
+        
+        # Rate limiting
+        limit_req_zone $binary_remote_addr zone=api:10m rate=10r/s;
+        limit_conn_zone $binary_remote_addr zone=conn_limit:10m;
+        
+        server_tokens off;
+        
+        include /etc/nginx/conf.d/*.conf;
+    }
+    
+  default.conf: |
+    server {
+        listen 3002;
+        server_name _;
+        root /usr/share/nginx/html;
+        index index.html index.htm;
+        
+        # Rate limiting
+        limit_req zone=api burst=20 nodelay;
+        limit_conn conn_limit 50;
+        
+        location / {
+            try_files $uri $uri/ /index.html;
+            
+            location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$ {
+                expires 1y;
+                add_header Cache-Control "public, immutable";
+            }
+            
+            location ~* \.html$ {
+                expires -1;
+                add_header Cache-Control "no-cache, no-store, must-revalidate";
+            }
+        }
+        
+        # API proxy
+        location /api/ {
+            limit_req zone=api burst=10 nodelay;
+            proxy_pass http://fusion-bitcoin-relayer:3000/;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+        }
+        
+        # Health check
+        location /health {
+            access_log off;
+            return 200 'healthy\n';
+            add_header Content-Type text/plain;
+        }
+        
+        # Block hidden files
+        location ~ /\. {
+            deny all;
+            access_log off;
+            log_not_found off;
+        }
+        
+        error_page 404 /index.html;
+        error_page 500 502 503 504 /50x.html;
+    }
+    
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fusion-bitcoin-monitoring
+  namespace: fusion-bitcoin
+  labels:
+    app: fusion-bitcoin-bridge
+    component: monitoring
+    environment: production
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 15s
+      evaluation_interval: 15s
+      
+    rule_files:
+      - "alert-rules/*.yml"
+      
+    scrape_configs:
+      - job_name: 'fusion-bitcoin-relayer'
+        static_configs:
+          - targets: ['fusion-bitcoin-relayer:9090']
+        scrape_interval: 15s
+        metrics_path: /metrics
+        
+      - job_name: 'fusion-bitcoin-resolver'
+        static_configs:
+          - targets: ['fusion-bitcoin-resolver:9091']
+        scrape_interval: 15s
+        metrics_path: /metrics
+        
+      - job_name: 'fusion-bitcoin-frontend'
+        static_configs:
+          - targets: ['fusion-bitcoin-frontend:9092']
+        scrape_interval: 15s
+        metrics_path: /metrics
+        
+    alertmanager:
+      alertmanagers:
+        - static_configs:
+            - targets: ['alertmanager:9093']
+            
+  alert-rules.yml: |
+    groups:
+    - name: fusion-bitcoin-alerts
+      rules:
+      - alert: ServiceDown
+        expr: up == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Service {{ $labels.instance }} is down"
+          description: "{{ $labels.instance }} has been down for more than 1 minute."
+          
+      - alert: HighErrorRate
+        expr: rate(http_requests_total{status=~"5.."}[5m]) > 0.1
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "High error rate on {{ $labels.instance }}"
+          description: "Error rate is {{ $value }} errors per second."
+          
+      - alert: HighResponseTime
+        expr: histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m])) > 0.5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High response time on {{ $labels.instance }}"
+          description: "95th percentile response time is {{ $value }} seconds."

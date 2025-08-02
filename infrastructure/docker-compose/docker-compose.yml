@@ -1,0 +1,239 @@
+# Docker Compose for Fusion Bitcoin Bridge
+# Main configuration for local development environment
+
+version: '3.8'
+
+networks:
+  fusion-bitcoin-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  prometheus_data:
+    driver: local
+  grafana_data:
+    driver: local
+  bitcoin_data:
+    driver: local
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: fusion-bitcoin-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DB_NAME:-fusion_bitcoin}
+      POSTGRES_USER: ${DB_USERNAME:-fusionbitcoin}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-localdev123}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    ports:
+      - "${DB_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init-scripts:/docker-entrypoint-initdb.d:ro
+    networks:
+      - fusion-bitcoin-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USERNAME:-fusionbitcoin} -d ${DB_NAME:-fusion_bitcoin}"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # Redis Cache
+  redis:
+    image: redis:7-alpine
+    container_name: fusion-bitcoin-redis
+    restart: unless-stopped
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+      - ./redis/redis.conf:/usr/local/etc/redis/redis.conf:ro
+    command: redis-server /usr/local/etc/redis/redis.conf
+    networks:
+      - fusion-bitcoin-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  # Relayer Service
+  relayer:
+    build:
+      context: ../../
+      dockerfile: docker/Dockerfile.relayer
+    container_name: fusion-bitcoin-relayer
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=${NODE_ENV:-development}
+      - LOG_LEVEL=${LOG_LEVEL:-debug}
+      - PORT=3000
+      - METRICS_PORT=9090
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_NAME=${DB_NAME:-fusion_bitcoin}
+      - DB_USERNAME=${DB_USERNAME:-fusionbitcoin}
+      - DB_PASSWORD=${DB_PASSWORD:-localdev123}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - ETH_NETWORK=${ETH_NETWORK:-goerli}
+      - BTC_NETWORK=${BTC_NETWORK:-testnet}
+      - ETH_RPC_URL=${ETH_RPC_URL}
+      - BTC_RPC_URL=${BTC_RPC_URL}
+      - PRIVATE_KEY=${PRIVATE_KEY}
+    ports:
+      - "3000:3000"
+      - "9090:9090"
+    volumes:
+      - ../../backend:/app
+      - /app/node_modules
+      - ./logs:/app/logs
+    networks:
+      - fusion-bitcoin-network
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # Resolver Service
+  resolver:
+    build:
+      context: ../../
+      dockerfile: docker/Dockerfile.resolver
+    container_name: fusion-bitcoin-resolver
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=${NODE_ENV:-development}
+      - LOG_LEVEL=${LOG_LEVEL:-debug}
+      - PORT=3001
+      - METRICS_PORT=9091
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_NAME=${DB_NAME:-fusion_bitcoin}
+      - DB_USERNAME=${DB_USERNAME:-fusionbitcoin}
+      - DB_PASSWORD=${DB_PASSWORD:-localdev123}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - ETH_NETWORK=${ETH_NETWORK:-goerli}
+      - BTC_NETWORK=${BTC_NETWORK:-testnet}
+      - ETH_RPC_URL=${ETH_RPC_URL}
+      - BTC_RPC_URL=${BTC_RPC_URL}
+      - PRIVATE_KEY=${PRIVATE_KEY}
+    ports:
+      - "3001:3001"
+      - "9091:9091"
+    volumes:
+      - ../../backend:/app
+      - /app/node_modules
+      - ./logs:/app/logs
+    networks:
+      - fusion-bitcoin-network
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # Frontend Service
+  frontend:
+    build:
+      context: ../../
+      dockerfile: docker/Dockerfile.frontend
+    container_name: fusion-bitcoin-frontend
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=${NODE_ENV:-development}
+      - REACT_APP_API_URL=http://localhost:3000
+      - REACT_APP_ENVIRONMENT=local
+    ports:
+      - "3002:3002"
+    volumes:
+      - ../../frontend:/app
+      - /app/node_modules
+      - /app/build
+    networks:
+      - fusion-bitcoin-network
+    depends_on:
+      - relayer
+      - resolver
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3002/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  # Nginx Reverse Proxy
+  nginx:
+    image: nginx:alpine
+    container_name: fusion-bitcoin-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ../../docker/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ../../docker/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./ssl:/etc/nginx/ssl:ro
+      - ./logs/nginx:/var/log/nginx
+    networks:
+      - fusion-bitcoin-network
+    depends_on:
+      - frontend
+      - relayer
+      - resolver
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  # Bitcoin Core (for local testing)
+  bitcoind:
+    image: ruimarinho/bitcoin-core:23
+    container_name: fusion-bitcoin-bitcoind
+    restart: unless-stopped
+    environment:
+      BITCOIN_DATA: /home/bitcoin/.bitcoin
+    ports:
+      - "18443:18443"  # regtest RPC port
+      - "18444:18444"  # regtest P2P port
+    volumes:
+      - ./bitcoin/bitcoin.conf:/home/bitcoin/.bitcoin/bitcoin.conf:ro
+      - bitcoin_data:/home/bitcoin/.bitcoin
+    networks:
+      - fusion-bitcoin-network
+    command: >
+      bitcoind
+      -regtest
+      -server
+      -rpcallowip=0.0.0.0/0
+      -rpcbind=0.0.0.0
+      -rpcuser=fusion
+      -rpcpassword=bitcoin123
+      -fallbackfee=0.0002
+      -txindex=1
